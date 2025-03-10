@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+// clang-format off
 // How to use:
 //
 // Use this in *one* .c or .cpp
@@ -1159,6 +1160,7 @@ public:
 		SIMDVEC4 dummy0, dummy1;	// pad to 3 full cachelines.
 	};
 	BVH8_CPU( BVHContext ctx = {} ) { layout = LAYOUT_BVH8_AVX2; context = ctx; }
+	BVH8_CPU(const bvhvec4* vertices, const uint32_t* indices, const uint32_t prims) { layout = LAYOUT_BVH8_AVX2; Build(vertices, indices, prims); }
 	~BVH8_CPU();
 	void Build( const bvhvec4* vertices, const uint32_t primCount );
 	void Build( const bvhvec4slice& vertices );
