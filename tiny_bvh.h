@@ -100,6 +100,11 @@ THE SOFTWARE.
 // #define PARANOID // checks out-of-bound access of slices
 // #define SLICEDUMP // dumps the slice used for building to a file - debug feature.
 
+// Copy/Move constructors and assignment operators for struct it is useful for
+// define TINYBVH_USE_COPY_MOVE_SEMANTICS
+
+#define TINYBVH_USE_JOBSYSTEM
+
 // Binned BVH building: bin count.
 #ifndef BVHBINS
 #define BVHBINS 8
@@ -146,7 +151,7 @@ THE SOFTWARE.
 
 // Threaded BuildAVX
 #ifndef MT_BUILD_THRESHOLD
-#define MT_BUILD_THRESHOLD 50'000 // single-threaded builds below this triangle count
+#define MT_BUILD_THRESHOLD 500'000'000 // single-threaded builds below this triangle count
 #endif
 
 // Features
@@ -409,6 +414,12 @@ struct bvhuint4
 struct bvhmat4 // exists only so we can use tinybvh types conveniently in tinyscene.
 {
 	bvhmat4() = default;
+#ifdef TINYBVH_USE_COPY_MOVE_SEMANTICS
+	bvhmat4(const bvhmat4& other) noexcept { memcpy(&cell[0], &other.cell[0], 16 * sizeof(float)); }
+	bvhmat4& operator=(const bvhmat4& other) noexcept { if(&other != this) memcpy(&cell[0], &other.cell[0], 16 * sizeof(float)); return *this; }
+	bvhmat4(bvhmat4&& other) noexcept { memcpy(&cell[0], &other.cell[0], 16 * sizeof(float)); }
+	bvhmat4& operator=(bvhmat4&& other) noexcept { if(&other != this) memcpy(&cell[0], &other.cell[0], 16 * sizeof(float)); return *this; }
+#endif
 	float& operator [] ( const int32_t i ) { return cell[i]; }
 	const float& operator [] ( const int32_t i ) const { return cell[i]; }
 	bvhmat4& operator += ( const bvhmat4& a ) { for (int i = 0; i < 16; i++) cell[i] += a.cell[i]; return *this; }
@@ -831,8 +842,6 @@ protected:
 	static void PrecomputeTriangle( const bvhvec4slice& vert, const uint32_t ti0, const uint32_t ti1, const uint32_t ti2, float* T );
 	static float SA( const bvhvec3& aabbMin, const bvhvec3& aabbMax );
 	// JobSystem pointer for threaded builds
-	JobSystem* subtreeJobs = 0;
-	JobSystem* binningJobs = 0; // separate job stack: these will join while subtreeJobs may still be queued.
 };
 
 class BLASInstance;
@@ -1446,6 +1455,45 @@ class ALIGNED( 64 ) BLASInstance
 public:
 	BLASInstance() = default;
 	BLASInstance( uint32_t idx ) : blasIdx( idx ) {}
+#ifdef TINYBVH_USE_COPY_MOVE_SEMANTICS
+	BLASInstance(const BLASInstance&) = delete;
+	BLASInstance& operator=(const BLASInstance&) = delete;
+
+	BLASInstance(BLASInstance&& other) noexcept : transform(std::move(other.transform)),
+												  invTransform(std::move(other.invTransform)),
+												  aabbMin(other.aabbMin),
+												  blasIdx(other.blasIdx),
+												  aabbMax(other.aabbMax),
+												  mask(other.mask)
+	{
+		other.transform = bvhmat4();
+		other.invTransform = bvhmat4();
+		other.aabbMin = bvhvec3( BVH_FAR );
+		other.blasIdx = 0;
+		other.aabbMax = bvhvec3( -BVH_FAR );
+	}
+
+	BLASInstance& operator=(BLASInstance&& other) noexcept 
+	{
+		if(&other != this)
+		{
+			transform = std::move(other.transform);
+			invTransform = std::move(other.invTransform);
+			aabbMin = other.aabbMin;
+			blasIdx = other.blasIdx;
+			aabbMax = other.aabbMax;
+			mask = other.mask;
+
+			other.transform = bvhmat4();
+			other.invTransform = bvhmat4();
+			other.aabbMin = bvhvec3( BVH_FAR );
+			other.blasIdx = 0;
+			other.aabbMax = bvhvec3( -BVH_FAR );
+		}
+
+		return *this;
+	}
+#endif
 	bvhmat4 transform; // defaults to identity
 	bvhmat4 invTransform; // defaults to identity
 	bvhvec3 aabbMin = bvhvec3( BVH_FAR );
@@ -1465,6 +1513,47 @@ class BLASInstanceEx
 public:
 	BLASInstanceEx() = default;
 	BLASInstanceEx( uint64_t idx ) : blasIdx( idx ) {}
+#ifdef TINYBVH_USE_COPY_MOVE_SEMANTICS
+	BLASInstanceEx(const BLASInstanceEx&) = delete;
+	BLASInstanceEx& operator=(const BLASInstanceEx&) = delete;
+
+	BLASInstanceEx(BLASInstanceEx&& other) noexcept :
+												      aabbMin(other.aabbMin),
+												      blasIdx(other.blasIdx),
+												      aabbMax(other.aabbMax),
+												      mask(other.mask)
+	{
+		memcpy(&transform[0], &other.transform[0], 16 * sizeof(double));
+		memcpy(&invTransform[0], &other.invTransform[0], 16 * sizeof(double));
+
+		other.transform = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+		other.invTransform = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+		other.aabbMin = bvhdbl3( BVH_FAR );
+		other.blasIdx = 0;
+		other.aabbMax = bvhdbl3( -BVH_FAR );
+	}
+
+	BLASInstanceEx& operator=(BLASInstanceEx&& other) noexcept 
+	{
+		if(&other != this)
+		{
+			memcpy(&transform[0], &other.transform[0], 16 * sizeof(double));
+			memcpy(&invTransform[0], &other.invTransform[0], 16 * sizeof(double));
+			aabbMin = other.aabbMin;
+			blasIdx = other.blasIdx;
+			aabbMax = other.aabbMax;
+			mask = other.mask;
+
+			other.transform = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+			other.invTransform = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+			other.aabbMin = bvhdbl3( BVH_FAR );
+			other.blasIdx = 0;
+			other.aabbMax = bvhdbl3( -BVH_FAR );
+		}
+
+		return *this;
+	}
+#endif
 	double transform[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // identity
 	double invTransform[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // identity
 	bvhdbl3 aabbMin = bvhdbl3( BVH_DBL_FAR );
@@ -1676,6 +1765,7 @@ void BVHBase::CopyBasePropertiesFrom( const BVHBase& original )
 
 // Wicked job system, condensed. https://github.com/turanszkij/WickedEngine
 // Removed: Thread priority, Dispatch, graceful shutdown; not needed in TinyBVH.
+#ifdef TINYBVH_USE_JOBSYSTEM
 class JobSystem
 {
 public:
@@ -1766,6 +1856,7 @@ public:
 	}
 	bool IsBusy() { return ctx.counter.load() > 0; }
 };
+#endif
 
 // BVH implementation
 // ----------------------------------------------------------------------------
@@ -1775,8 +1866,6 @@ BVH::~BVH()
 	AlignedFree( bvhNode );
 	AlignedFree( primIdx );
 	AlignedFree( fragment );
-	delete subtreeJobs;
-	delete binningJobs;
 }
 
 void BVH::Save( const char* fileName )
@@ -1816,16 +1905,12 @@ bool BVH::Load( const char* fileName, const bvhvec4slice& vertices, const uint32
 	if (expectIndexed && fileTriCount != primCount) return false;
 	if (!expectIndexed && fileTriCount != vertices.count / 3) return false;
 	// backup pointers to JobSystems: can't deserialize pointers.
-	JobSystem* subtreeBackup = subtreeJobs;
-	JobSystem* binningBackup = binningJobs;
 	// all checks passed; safe to overwrite *this
 	s.read( (char*)this, sizeof( BVH ) );
 	bool fileIsIndexed = vertIdx != nullptr;
 	if (expectIndexed != fileIsIndexed) return false; // not what we expected.
 	if (blasList != nullptr || instList != nullptr) return false; // can't load/save TLAS.
 	context = tmp; // can't load context; function pointers will differ.
-	subtreeJobs = subtreeBackup;
-	binningJobs = binningBackup;
 	bvhNode = (BVHNode*)AlignedAlloc( allocatedNodes * sizeof( BVHNode ) );
 	primIdx = (uint32_t*)AlignedAlloc( idxCount * sizeof( uint32_t ) );
 	fragment = 0; // no need for this in a BVH that can't be rebuilt.
@@ -2335,7 +2420,6 @@ void BVH::Build( uint32_t nodeIdx, uint32_t depth )
 	if (depth == 0) atomicNewNodePtr = new std::atomic<uint32_t>( newNodePtr );
 	// avoid threaded building for small meshes: not efficient; build multiple in parallel instead.
 	if (triCount < MT_BUILD_THRESHOLD) depth = 999;
-	if (!subtreeJobs) subtreeJobs = new JobSystem();
 	// subdivide root node recursively
 	uint32_t task[256], taskCount = 0;
 	BVHNode& root = bvhNode[0];
@@ -2422,9 +2506,8 @@ void BVH::Build( uint32_t nodeIdx, uint32_t depth )
 			node.leftFirst = n, node.triCount = 0;
 			if (depth < 5)
 			{
-				BVH* thisBVH = this; // avoid warnings / complexities of capturing this
-				subtreeJobs->Execute( [=]() { thisBVH->Build( n, depth + 1 ); } );
-				subtreeJobs->Execute( [=]() { thisBVH->Build( n + 1, depth + 1 ); } );
+				this->Build( n, depth + 1 );
+				this->Build( n + 1, depth + 1 );
 				break;
 			}
 			task[taskCount++] = n + 1, nodeIdx = n;
@@ -2435,7 +2518,6 @@ void BVH::Build( uint32_t nodeIdx, uint32_t depth )
 	// all done.
 	if (depth == 0 || triCount < MT_BUILD_THRESHOLD)
 	{
-		subtreeJobs->Wait();
 		aabbMin = bvhNode[0].aabbMin, aabbMax = bvhNode[0].aabbMax;
 		refittable = true; // not using spatial splits: can refit this BVH
 		may_have_holes = false; // the reference builder produces a continuous list of nodes
@@ -2679,8 +2761,6 @@ void BVH::BuildHQTask(
 	BVHNode& root = bvhNode[0];
 	const float rootArea = tinybvh_half_area( root.aabbMax - root.aabbMin );
 	const bvhvec3 minDim = (root.aabbMax - root.aabbMin) * 1e-7f /* don't touch, carefully picked */;
-	// threading
-	if (!subtreeJobs) subtreeJobs = new JobSystem();
 	// subdivide
 	uint32_t binCount = hqbvhbins;
 	while (1)
@@ -2922,11 +3002,8 @@ void BVH::BuildHQTask(
 			// recurse
 			if (depth < maxDepth)
 			{
-				// spawn a new thread for the right branch
-				BVH* thisBVH = this; // avoid warnings / complexities of capturing this
-				subtreeJobs->Execute( [=]() { thisBVH->BuildHQTask( leftChildIdx, depth + 1, maxDepth, sliceStart, (A + B) >> 1, idxTmp ); } );
-				subtreeJobs->Execute( [=]() { thisBVH->BuildHQTask( rightChildIdx, depth + 1, maxDepth, (A + B) >> 1, sliceEnd, idxTmp ); } );
-				break;
+				this->BuildHQTask( leftChildIdx, depth + 1, maxDepth, sliceStart, (A + B) >> 1, idxTmp );
+				this->BuildHQTask( rightChildIdx, depth + 1, maxDepth, (A + B) >> 1, sliceEnd, idxTmp );
 			}
 			// proceed with left child, push right child on local stack
 			localTask[localTasks].node = rightChildIdx, localTask[localTasks].depth = depth;
@@ -2938,8 +3015,6 @@ void BVH::BuildHQTask(
 		nodeIdx = localTask[--localTasks].node, depth = localTask[localTasks].depth;
 		sliceStart = localTask[localTasks].sliceStart, sliceEnd = localTask[localTasks].sliceEnd;
 	}
-	// all done.
-	if (depth == 0) subtreeJobs->Wait();
 }
 
 void BVH::BuildHQ()
@@ -6550,9 +6625,6 @@ void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth, uint32_t subtreeNewNodePtr
 	for (uint32_t i = 0; i < 3 * AVXBINS; i++) binboxOrig[i] = max8; // binbox initialization template
 	// avoid threaded building for small meshes: not efficient; build multiple in parallel instead.
 	if (triCount < MT_BUILD_THRESHOLD) depth = 999;
-	// threading.
-	if (!subtreeJobs) subtreeJobs = new JobSystem();
-	if (!binningJobs) binningJobs = new JobSystem();
 	// subdivide recursively
 	ALIGNED( 64 ) uint32_t task[128], taskCount = 0;
 	BVHNode& root = bvhNode[0];
@@ -6580,10 +6652,8 @@ void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth, uint32_t subtreeNewNodePtr
 					const uint32_t last = slice == (slices - 1) ? (node.leftFirst + node.triCount) : (first + sliceSize);
 					__m256* sbb = slicebinbox[slice], * bo = binboxOrig;
 					uint32_t* sc = slicecount[slice];
-					BVH* thisBVH = this; // avoid warnings / complexities of capturing this
-					binningJobs->Execute( [=]() { thisBVH->BuildAVXBinTask( first, last, sbb, bo, sc, nmin4, rpd4 ); } );
+					this->BuildAVXBinTask( first, last, sbb, bo, sc, nmin4, rpd4 );
 				}
-				binningJobs->Wait();
 				// combine results from threads
 				for (int a = 0; a < 3; a++) for (int i = 0; i < AVXBINS; i++)
 					for (int ai = a * AVXBINS + i, slice = 1; slice < slices; slice++) count[ai] += slicecount[slice][ai],
@@ -6644,9 +6714,8 @@ void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth, uint32_t subtreeNewNodePtr
 			if (leftCount + rightCount > 2000 && depth < 5)
 			{
 				// be gentle, these are my first lambdas ever.
-				BVH* thisBVH = this; // avoid warnings / complexities of capturing this
-				subtreeJobs->Execute( [=]() { thisBVH->BuildAVX( n, depth + 1, subtreeNewNodePtr ); } );
-				subtreeJobs->Execute( [=]() { thisBVH->BuildAVX( n + 1, depth + 1, subtreeNewNodePtr + leftCount * 2 - 1 ); } );
+				this->BuildAVX( n, depth + 1, subtreeNewNodePtr );
+				this->BuildAVX( n + 1, depth + 1, subtreeNewNodePtr + leftCount * 2 - 1 );
 				break;
 			}
 			task[taskCount++] = n + 1, nodeIdx = n;
@@ -6657,8 +6726,6 @@ void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth, uint32_t subtreeNewNodePtr
 	// all done.
 	if (depth == 0 || triCount < MT_BUILD_THRESHOLD)
 	{
-		// wait for all threads to complete.
-		subtreeJobs->Wait();
 		// tree has been built.
 		aabbMin = bvhNode[0].aabbMin, aabbMax = bvhNode[0].aabbMax;
 		refittable = true; // not using spatial splits: can refit this BVH
